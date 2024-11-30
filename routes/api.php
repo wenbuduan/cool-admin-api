@@ -3,7 +3,8 @@
 use App\Http\Controllers\AdminMenuController;
 use App\Http\Controllers\AdminRoleController;
 use App\Http\Controllers\AdminUserController;
-use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ConfigController;
+use App\Http\Controllers\LoginController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -22,9 +23,9 @@ Route::get('/', function () {
     return "welcome";
 });
 
-Route::get('/getConfig', [AuthController::class, 'getConfig'])->middleware('throttle:100,30');
-Route::get('/captchaImage', [AuthController::class, 'captchaImage'])->middleware('throttle:100,30');
-Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:100,30');
+Route::get('/getConfig', [ConfigController::class, 'getConfig'])->middleware('throttle:100,30');
+Route::get('/captchaImage', [LoginController::class, 'captchaImage'])->middleware('throttle:100,30');
+Route::post('/login', [LoginController::class, 'login'])->middleware('throttle:100,30');
 
 Route::group(['middleware' => ['auth:api']], function() {
     Route::get('/admin/user/list', [AdminUserController::class, 'getAdminUserList']);
