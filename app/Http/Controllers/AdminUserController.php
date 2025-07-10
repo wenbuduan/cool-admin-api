@@ -8,57 +8,129 @@ use Illuminate\Support\Facades\Log;
 
 class AdminUserController extends Controller
 {
+
+    public function getDictionaryByFilter(Request $request)
+    {
+        $request->validate([
+            'dictCode' => 'required|string|max:255',
+        ]);
+        $dictCode = $request->input('dictCode');
+
+        $dict_id = DB::table('sys_dictionary')
+            ->where('dict_code', $dictCode)
+            ->value('dict_id');
+
+        $dictionary = DB::table('sys_dictionary_data')
+            ->select([
+                'dict_id as dictId',
+                'dict_data_code as dictDataCode',
+                'dict_data_name as dictDataName',
+                'comments',
+                'dict_data_id as dictDataId',
+                'comments as dictName'
+            ])
+            ->where('dict_id', $dict_id)
+            ->get();
+
+        if (count($dictionary) > 0) {
+            foreach ($dictionary as  $key => &$item) {
+                $item->dictDataId = $key + 1;
+            }
+        }
+
+        return $this->jsonOk($dictionary);
+    }
+
+    public function checkUserExistence(Request $request)
+    {
+        $field = $request->field;
+        $value = $request->value;
+        $result = DB::table('sys_users')->where($field, $value)->get();
+        if (count($result) > 0) {
+            return $this->jsonOk('用户已存在');
+        }
+    }
     public function getAdminUserList(Request $request)
     {
-        $page_index = intval($request->page_index);
-        $page_size = intval($request->page_size);
+        $page_index = intval($request->page);
+        $page_size = intval($request->limit);
         $id = $request->id;
         $username = $request->username;
-        $phone_number = $request->phone_number;
-        $status = $request->status;
+        $nickname = $request->nickname;
+        $gender = $request->sex;
 
-        $sql = "(
-            SELECT u.* FROM admin_users u where u.deleted = 0
-        ) a";
-        $query = DB::table(DB::raw($sql))
-            ->select('id', 'username', 'nickname', 'email', 'phone_number',
-                'gender', 'avatar', 'is_admin', 'remark', 'status', 'create_time');
-
-        if (!is_null($id)) {
-            $query->where('id', $id);
-        }
-        if (!is_null($username)) {
-            $query->where('username', $username);
-        }
-        if (!is_null($phone_number)) {
-            $query->where('phone_number', $phone_number);
-        }
-        if (!is_null($status)) {
-            $query->where('status', $status);
-        }
+        // $sql = "(
+        //     SELECT u.* FROM sys_users u where u.deleted = 0
+        // ) a";
+        $query = DB::table('sys_users')
+            ->select(
+                'id',
+                'username',
+                'nickname',
+                'email',
+                'phone',
+                'gender',
+                'avatar',
+                'is_admin',
+                'remark',
+                'status',
+                'introduction',
+                'create_time'
+            )->where('deleted', 0);
 
         $pages = $query
+            ->when($id, function ($query) use ($id) {
+                $query->where('id', $id);
+            })
+            ->when($username, function ($query) use ($username) {
+                $query->where('username', 'like', '%' . $username . '%');
+            })
+            ->when($nickname, function ($query) use ($nickname) {
+                $query->where('nickname', 'like', '%' . $nickname . '%');
+            })
+            ->when($gender, function ($query) use ($gender) {
+                $query->where('gender', $gender);
+            })
             ->orderBy($orderColumn ?? 'create_time', $orderType ?? 'desc')
+            // ->toSql();
             ->paginate($page_size, ['*'], 'page', $page_index);
 
         foreach ($pages->items() as &$user_info) {
-            $user_info->role_ids = DB::table('admin_user_role')
+            $user_info->userId = $user_info->id;
+            $user_info->role_ids = DB::table('sys_user_roles')
                 ->where('user_id', $user_info->id)
                 ->pluck('role_id');
+            $user_info->roles = DB::table('sys_roles')
+                ->select([
+                    'role_id as roleId',
+                    'role_name as roleName',
+                    'role_code as roleCode',
+                    'sort_num as sortNum',
+                    'status',
+                    'comments',
+                    'create_time'
+                ])
+                ->whereIn('role_id', $user_info->role_ids)
+                ->get();
+            $user_info->sexName = DB::table('sys_dictionary_data')->where('dict_data_code', $user_info->gender)->value('dict_data_name');
+            $user_info->sex = $user_info->gender;
         }
 
+
         return $this->jsonOk([
-            'total' => $pages->total(),
-            'rows' => $pages->items(),
+            'count' => $pages->total(),
+            'list' => $pages->items(),
         ]);
     }
 
     public function create(Request $request)
     {
+        // \dd($request->all());
         $this->validate($request, [
             'username' => 'required|string',
             'password' => 'required|string',
-            'status' => 'required|string',
+            'phone' => 'required|string',
+            'status' => 'required|integer',
         ]);
         $body_entity = $request->json()->all();
 
@@ -68,20 +140,21 @@ class AdminUserController extends Controller
             'username' => $body_entity['username'],
             'nickname' => $body_entity['nickname'],
             'email' => $body_entity['email'] ?? null,
-            'phone_number' => $body_entity['phone_number'] ?? null,
-            'gender' => $body_entity['gender'] ?? 'UNKNOWN',
+            'phone' => $body_entity['phone'] ?? null,
+            'gender' => $body_entity['sex'] ?? 'UNKNOWN',
             'password' => $hashed_password,
             'remark' => $body_entity['remark'] ?? null,
             'status' => $body_entity['status'],
+            'introduction' => $body_entity['introduction'] ?? '',
         ];
 
         DB::beginTransaction();
         try {
-            $user_id = DB::table('admin_users')->insertGetId($user_info);
+            $user_id = DB::table('sys_users')->insertGetId($user_info);
 
-            $role_ids = $body_entity['role_ids'];
+            $role_ids = $body_entity['roles'];
             foreach ($role_ids as $role_id) {
-                DB::table('admin_user_role')->insert(['user_id' => $user_id, 'role_id' => $role_id]);
+                DB::table('sys_user_roles')->insert(['user_id' => $user_id, 'role_id' => $role_id['roleId']]);
             }
 
             DB::commit();
@@ -89,7 +162,7 @@ class AdminUserController extends Controller
             DB::rollback();
 
             Log::error($e);
-            return $this->jsonError('系统异常');
+            return $this->jsonError($e->getMessage());
         }
 
         return $this->jsonOk([
@@ -99,38 +172,39 @@ class AdminUserController extends Controller
 
     public function update(Request $request)
     {
+        // \dd($request->all());
         $this->validate($request, [
-            'id' => 'required|int',
+            'userId' => 'required|int',
             'username' => 'required|string',
-            'status' => 'required|string',
+            'status' => 'required|integer|max:1|min:0',
         ]);
 
         $body_entity = $request->json()->all();
-        $user_id = $body_entity['id'];
+        $user_id = $body_entity['userId'];
 
         $user_info = [
             'username' => $body_entity['username'],
             'nickname' => $body_entity['nickname'],
             'email' => $body_entity['email'],
-            'phone_number' => $body_entity['phone_number'],
-            'gender' => $body_entity['gender'],
-            'remark' => $body_entity['remark'],
+            'phone' => $body_entity['phone'],
+            'gender' => $body_entity['sex'],
+            'introduction' => $body_entity['introduction'] ?? '',
             'status' => $body_entity['status'],
         ];
 
         DB::beginTransaction();
         try {
-            DB::table('admin_users')
+            DB::table('sys_users')
                 ->where('id', $user_id)
                 ->update($user_info);
 
-            DB::table('admin_user_role')
+            DB::table('sys_user_roles')
                 ->where('user_id', $user_id)
                 ->delete();
 
-            $role_ids = $body_entity['role_ids'];
+            $role_ids = $body_entity['roles'];
             foreach ($role_ids as $role_id) {
-                DB::table('admin_user_role')->insert(['user_id' => $user_id, 'role_id' => $role_id]);
+                DB::table('sys_user_roles')->insert(['user_id' => $user_id, 'role_id' => $role_id['roleId']]);
             }
 
             DB::commit();
@@ -138,7 +212,7 @@ class AdminUserController extends Controller
             DB::rollback();
 
             Log::error($e);
-            return $this->jsonError('系统异常');
+            return $this->jsonError($e->getMessage());
         }
 
         return $this->jsonOk();
@@ -147,14 +221,14 @@ class AdminUserController extends Controller
     public function updateStatus(Request $request)
     {
         $this->validate($request, [
-            'id' => 'required|int',
-            'status' => 'required|string|max:20',
+            'userId' => 'required|int',
+            'status' => 'required|integer|max:1|min:0',
         ]);
 
-        $userId = $request->id;
+        $userId = $request->userId;
         $status = $request->status;
 
-        DB::table('admin_users')
+        DB::table('sys_users')
             ->where('id', $userId)
             ->update([
                 'status' => $status,
@@ -167,16 +241,16 @@ class AdminUserController extends Controller
     public function resetPassword(Request $request)
     {
         $this->validate($request, [
-            'id' => 'required|int',
+            'userId' => 'required|int',
             'password' => 'required|string|max:20',
         ]);
 
-        $userId = $request->id;
+        $userId = $request->userId;
         $password = $request->password;
 
         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
-        DB::table('admin_users')
+        DB::table('sys_users')
             ->where('id', $userId)
             ->update([
                 'password' => $hashed_password,
@@ -187,20 +261,21 @@ class AdminUserController extends Controller
 
     public function delete(Request $request)
     {
-        $this->validate($request, [
-            'id' => 'required|int',
-        ]);
+        // \dd($request->all());
+        // $this->validate($request, [
+        //     'id' => 'required|int',
+        // ]);
 
-        $user_id = $request->id;
+        $user_ids = $request->all();
 
-        DB::table('admin_users')
-            ->where('id', $user_id)
+        DB::table('sys_users')
+            ->whereIn('id', $user_ids)
             ->update([
                 'deleted' => 1,
             ]);
 
-        DB::table('admin_user_role')
-            ->where('user_id', $user_id)
+        DB::table('sys_user_roles')
+            ->whereIn('user_id', $user_ids)
             ->delete();
 
         return $this->jsonOk();
@@ -211,8 +286,8 @@ class AdminUserController extends Controller
     {
         $userId = $this->getAdminId();
 
-        $userinfo = DB::table('admin_users')
-            ->select('id', 'username', 'phone_number', 'gender', 'nickname', 'avatar', 'email', 'create_time')
+        $userinfo = DB::table('sys_users')
+            ->select('id', 'username', 'phone', 'gender', 'nickname', 'avatar', 'email', 'create_time')
             ->where('id', $userId)
             ->first();
 
@@ -232,7 +307,7 @@ class AdminUserController extends Controller
 
         $userId = $this->getAdminId();
 
-        $userinfo = DB::table('admin_users')
+        $userinfo = DB::table('sys_users')
             ->select('id', 'password')
             ->where('id', $userId)
             ->first();
@@ -243,7 +318,7 @@ class AdminUserController extends Controller
 
         $hashed_new_password = password_hash($new_password, PASSWORD_DEFAULT);
 
-        DB::table('admin_users')
+        DB::table('sys_users')
             ->where('id', $userId)
             ->update([
                 'password' => $hashed_new_password,

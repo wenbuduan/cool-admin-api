@@ -12,6 +12,7 @@ class Authenticate extends Middleware
     {
         $http_status_code = 200;
 
+        // dd($request->headers->get('Authorization'));
         if (!Auth::check()) {
             //return response('Unauthorized.', 401);
             // 修改非授权条件下的返回格式 确保所有api接口返回格式统一
